@@ -1,0 +1,15 @@
+[package]
+name = "mprizzle"
+description = "An async library for interacting with mpris over D-Bus."
+version = "0.0.1"
+repository = "https://github.com/qxb3/mprizzle"
+homepage = "https://github.com/qxb3/mprizzle"
+license = "MIT"
+edition = "2024"
+
+[dependencies]
+futures = "0.3.31"
+thiserror = "2.0.12"
+tokio = { version = "1.44.2", features = ["full"] }
+zbus = { version = "5.5.0", default-features = false, features = ["tokio"] }
+zvariant = "5.4.0"
