@@ -6,7 +6,7 @@ An async library for interacting with mpris over D-BUS built.
 
 ```toml
 [dependecies]
-mprizzle = "0.0.1"
+mprizzle = "0.0.2"
 ```
 
 # Usage
