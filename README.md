@@ -1,6 +1,6 @@
 # mprizzle
 
-An async library for interacting with mpris over D-BUS built.
+An async library for interacting with mpris over D-BUS
 
 # Installing
 
@@ -13,7 +13,7 @@ mprizzle = "0.0.2"
 
 ```rust
 use mprizzle::{Mpris, MprisEvent};
-                                                                                                             ```
+
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut mpris = Mpris::new_without_options().await?;
