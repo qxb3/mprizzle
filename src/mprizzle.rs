@@ -1,15 +1,13 @@
+use std::collections::HashMap;
 use std::{sync::Arc, time::Duration};
 
-use futures::StreamExt;
-use crate::proxies::{self, ProxyError};
-use crate::MetadataError;
-use crate::{identity::PlayerIdentity, player::PlayerError};
 use crate::player::MprisPlayer;
+use crate::proxies::{self, DBUS_MPRIS_INTERFACE_NAME, ProxyError};
+use crate::{MetadataError, identity};
+use crate::{identity::PlayerIdentity, player::PlayerError};
+use futures::StreamExt;
 use tokio::sync::{Mutex, broadcast, mpsc};
 use zbus::Connection;
-
-/// The interface of mpris over D-Bus.
-pub const DBUS_MPRIS_INTERFACE_NAME: &str = "org.mpris.MediaPlayer2";
 
 /// Represents errors that can occur in MPRIS operations.
 #[derive(Debug, thiserror::Error)]
@@ -65,10 +63,10 @@ pub enum MprisEvent {
 
 /// Configuration options for controlling MPRIS behavior.
 #[derive(Debug, Clone)]
-pub struct MprisOptions<T: IntoIterator<Item = &'static str> + Clone + Send> {
+pub struct MprisOptions {
     /// A list of player names to filter.
     /// Only players whose names match entries in this iterator will be added.
-    pub filter_players: T,
+    pub filter_players: Vec<&'static str>,
 }
 
 /// Represents an MPRIS connection.
@@ -83,7 +81,7 @@ pub struct MprisOptions<T: IntoIterator<Item = &'static str> + Clone + Send> {
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let mpris = Mpris::new_without_options().await?;
+///     let mpris = Mpris::new(None).await?;
 ///
 ///     // Start watching for mpris events.
 ///     mpris.watch();
@@ -104,15 +102,15 @@ pub struct MprisOptions<T: IntoIterator<Item = &'static str> + Clone + Send> {
 /// }
 /// ```
 #[derive(Debug)]
-pub struct Mpris<T: IntoIterator<Item = &'static str> + Clone + Send> {
+pub struct Mpris {
     /// The underlying connection to D-Bus.
     connection: Arc<Mutex<Connection>>,
 
     /// The current active players.
-    players: Arc<Mutex<Vec<MprisPlayer>>>,
+    players: Arc<Mutex<HashMap<PlayerIdentity, MprisPlayer>>>,
 
     /// Mpris options passed.
-    options: Option<MprisOptions<T>>,
+    options: Option<MprisOptions>,
 
     /// Event sender.
     sender: mpsc::UnboundedSender<MprisResult<MprisEvent>>,
@@ -121,15 +119,16 @@ pub struct Mpris<T: IntoIterator<Item = &'static str> + Clone + Send> {
     receiver: mpsc::UnboundedReceiver<MprisResult<MprisEvent>>,
 }
 
-impl<T: IntoIterator<Item = &'static str> + Clone + Send + 'static> Mpris<T> {
-    pub async fn new(options: Option<MprisOptions<T>>) -> MprisResult<Self> {
+impl Mpris {
+    pub async fn new(options: Option<MprisOptions>) -> MprisResult<Self> {
         let session = Connection::session()
             .await
             .map_err(|err| MprisError::FailedToConnectDbus(err.to_string()))?;
 
         let connection = Arc::new(Mutex::new(session));
 
-        let players = Arc::new(Mutex::new(Vec::new()));
+        let players = Arc::new(Mutex::new(HashMap::new()));
+
         let (sender, receiver) = mpsc::unbounded_channel();
 
         Ok(Self {
@@ -201,16 +200,9 @@ impl<T: IntoIterator<Item = &'static str> + Clone + Send + 'static> Mpris<T> {
                     // Creates identity from bus.
                     let identity = PlayerIdentity::new(bus.to_string()).ok()?;
 
-                    // Checks if this bus is on the filter_players.
-                    let is_on_filter = options.as_ref().map_or(false, |f| {
-                        f.filter_players
-                            .clone()
-                            .into_iter()
-                            .find(|f| identity.matches_either(&f))
-                            .is_some()
-                    });
-
-                    if bus.starts_with("org.mpris.MediaPlayer2.") && !is_on_filter {
+                    if bus.starts_with("org.mpris.MediaPlayer2.")
+                        && !Mpris::check_on_filter(&options, &identity)
+                    {
                         return Some(identity);
                     }
 
@@ -235,7 +227,7 @@ impl<T: IntoIterator<Item = &'static str> + Clone + Send + 'static> Mpris<T> {
 
                 // Push the player in the shared players.
                 let mut players = shared_players.lock().await;
-                players.push(player);
+                players.insert(identity.clone(), player);
 
                 // Send out PlayerAttached event along with the identity.
                 event_sender
@@ -256,7 +248,7 @@ impl<T: IntoIterator<Item = &'static str> + Clone + Send + 'static> Mpris<T> {
                     Some(signal) = noc_stream.next() => {
                         if let Ok((name, old_owner, new_owner)) = signal.body().deserialize::<(String, String, String)>() {
                             // Only accepts mpris signals.
-                            if !name.starts_with("org.mpris.MediaPlayer2.") {
+                            if !name.starts_with(DBUS_MPRIS_INTERFACE_NAME) {
                                 continue;
                             }
 
@@ -271,17 +263,8 @@ impl<T: IntoIterator<Item = &'static str> + Clone + Send + 'static> Mpris<T> {
                                     }
                                 };
 
-                                // Checks if this bus is on the filter_players.
-                                let is_on_filter = options.as_ref().map_or(false, |f| {
-                                    f.filter_players
-                                        .clone()
-                                        .into_iter()
-                                        .find(|f| identity.matches_either(&f))
-                                        .is_some()
-                                });
-
                                 // Only add the player and send out the PlayerAttached event if the identity is not on the filter_players.
-                                if !is_on_filter {
+                                if !Mpris::check_on_filter(&options, &identity) {
                                     // Creates the player itself with the shared connection.
                                     let shared_conn = Arc::clone(&shared_connection);
                                     let player = match MprisPlayer::new(shared_conn, identity.clone()).await {
@@ -297,7 +280,7 @@ impl<T: IntoIterator<Item = &'static str> + Clone + Send + 'static> Mpris<T> {
 
                                     // Push the player in the shared players.
                                     let mut players = shared_players.lock().await;
-                                    players.push(player);
+                                    players.insert(identity.clone(), player);
 
                                     // Send out PlayerAttached event along with the identity.
                                     event_sender.send(Ok(MprisEvent::PlayerAttached(identity))).unwrap();
@@ -306,24 +289,21 @@ impl<T: IntoIterator<Item = &'static str> + Clone + Send + 'static> Mpris<T> {
 
                             // There has been a mpris player detached.
                             if !old_owner.is_empty() && new_owner.is_empty() {
+                                let identity = match PlayerIdentity::new(name) {
+                                    Ok(identity) => identity,
+                                    Err(err) => {
+                                        event_sender
+                                            .send(Err(MprisError::Other(format!("Failed to create a player identity on detached player: {err}"))))
+                                            .unwrap();
+
+                                        return;
+                                    }
+                                };
+
                                 let mut players = shared_players.lock().await;
 
                                 // Only send out the PlayerDetached event if its on the shared players only.
-                                if let Some(index) = players.iter().position(|p| p.identity().matches_either(&name)) {
-                                    let player = match players.get(index) {
-                                        Some(player) => player,
-                                        None => {
-                                            event_sender.send(Err(MprisError::Other("Expected a player at index {index} but got None".into()))).unwrap();
-                                            return;
-                                        }
-                                    };
-
-                                    // Gets the player identity.
-                                    let identity = player.identity().clone();
-
-                                    // Remove the player at the shared players.
-                                    players.remove(index);
-
+                                if let Some(_) = players.remove(&identity) {
                                     // Send an event to the close channel.
                                     close_sender.send(identity.bus().to_string()).unwrap();
 
@@ -336,6 +316,22 @@ impl<T: IntoIterator<Item = &'static str> + Clone + Send + 'static> Mpris<T> {
                 }
             }
         });
+    }
+
+    /// A helper function to check if a player identity is on the filter_players option.
+    fn check_on_filter(options: &Option<MprisOptions>, identity: &PlayerIdentity) -> bool {
+        if let Some(options) = options {
+            if options
+                .filter_players
+                .iter()
+                .find(|f| identity.matches_either(f))
+                .is_some()
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Recieve mpris events.
@@ -352,26 +348,17 @@ impl<T: IntoIterator<Item = &'static str> + Clone + Send + 'static> Mpris<T> {
     }
 
     /// Gets the cloned mpris options.
-    pub fn options(&self) -> Option<MprisOptions<T>> {
+    pub fn options(&self) -> Option<MprisOptions> {
         self.options.clone()
     }
 
     /// Gets the shared active players.
-    pub fn players(&self) -> Arc<Mutex<Vec<MprisPlayer>>> {
+    pub fn players(&self) -> Arc<Mutex<HashMap<PlayerIdentity, MprisPlayer>>> {
         Arc::clone(&self.players)
     }
 
     /// Gets the cloned event sender.
     fn sender(&self) -> mpsc::UnboundedSender<MprisResult<MprisEvent>> {
         self.sender.clone()
-    }
-}
-
-/// My shitty fix of automatically inferring the T generic.
-/// If u know a better way to this pls help.
-/// Ill give u like the $2 on my bank account.
-impl Mpris<Vec<&'static str>> {
-    pub async fn new_without_options() -> MprisResult<Self> {
-        Self::new(None).await
     }
 }

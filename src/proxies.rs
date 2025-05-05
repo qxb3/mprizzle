@@ -5,6 +5,9 @@ use zbus::{Connection, Proxy};
 
 use crate::{MprisError, MprisResult};
 
+pub const DBUS_MPRIS_INTERFACE_NAME: &str = "org.mpris.MediaPlayer2";
+pub const DBUS_MPRIS_INTERFACE_PATH: &str = "/org/mpris/MediaPlayer2";
+
 /// Represents errors that can occur in MPRIX Proxy operations.
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyError {
@@ -57,7 +60,7 @@ pub async fn create_properties_proxy(
     let properties_proxy = Proxy::new(
         &*connection,
         bus.to_string(),
-        "/org/mpris/MediaPlayer2",
+        DBUS_MPRIS_INTERFACE_PATH,
         "org.freedesktop.DBus.Properties",
     )
     .await
@@ -78,14 +81,14 @@ pub async fn create_player_proxy(
     let proxy: Proxy = zbus::proxy::Builder::new(&*connection)
         .destination(bus.to_string())
         .map_err(|err| ProxyError::other(err))?
-        .path("/org/mpris/MediaPlayer2")
+        .path(DBUS_MPRIS_INTERFACE_PATH)
         .map_err(|err| ProxyError::other(err))?
-        .interface("org.mpris.MediaPlayer2.Player")
+        .interface(format!("{DBUS_MPRIS_INTERFACE_NAME}.Player"))
         .map_err(|err| ProxyError::other(err))?
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
         .await
-        .map_err(|_| ProxyError::failed_to_create("org.mpris.MediaPlayer2.Player"))?;
+        .map_err(|_| ProxyError::failed_to_create(format!("{DBUS_MPRIS_INTERFACE_NAME}.Player")))?;
 
     Ok(proxy)
 }

@@ -1,4 +1,4 @@
-use crate::{DBUS_MPRIS_INTERFACE_NAME, MprisError, MprisResult};
+use crate::{MprisError, MprisResult, proxies::DBUS_MPRIS_INTERFACE_NAME};
 
 /// A struct representing the identity of [`crate::player::MprisPlayer`].
 ///
@@ -13,7 +13,7 @@ use crate::{DBUS_MPRIS_INTERFACE_NAME, MprisError, MprisResult};
 /// assert!("spotify", spotify_identity.short());
 /// assert!("org.mpris.MediaPlayer2.spotify", spotify_identity.bus());
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlayerIdentity {
     /// The short name of the player.
     short: String,
@@ -53,7 +53,7 @@ impl PlayerIdentity {
 
     /// Returns `true` if the bus name starts with the given string.
     pub fn matches_bus_prefix(&self, other: &str) -> bool {
-        self.bus().starts_with(other)
+        other.starts_with(DBUS_MPRIS_INTERFACE_NAME) && self.bus().starts_with(other)
     }
 
     /// Returns `true` if either the short name or the bus name matches.
