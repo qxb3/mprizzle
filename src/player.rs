@@ -3,8 +3,9 @@ use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use futures::StreamExt;
 use tokio::sync::{Mutex, broadcast, mpsc};
 use zbus::{Connection, Proxy, zvariant};
+use zvariant::ObjectPath;
 
-use crate::{MprisError, MprisResult, status::PlaybackStatus};
+use crate::{LoopStatus, MprisError, MprisResult, status::PlaybackStatus};
 
 use super::{
     MprisEvent,
@@ -21,6 +22,12 @@ pub enum PlayerError {
 
     #[error("Failed to set player prop: {0}: {1}")]
     FailedToSetProp(String, String),
+
+    #[error("Failed to call {0} mpris function: {1}")]
+    FailedToCallFn(String, String),
+
+    #[error("{0}")]
+    Other(String),
 }
 
 impl PlayerError {
@@ -38,6 +45,21 @@ impl PlayerError {
         E: Into<String>,
     {
         MprisError::PlayerErr(PlayerError::FailedToSetProp(prop.into(), err.into()))
+    }
+
+    pub fn failed_to_call_fn<F, E>(name: F, err: E) -> MprisError
+    where
+        F: Into<String>,
+        E: Into<String>,
+    {
+        MprisError::PlayerErr(PlayerError::FailedToCallFn(name.into(), err.into()))
+    }
+
+    pub fn other<E>(err: E) -> MprisError
+    where
+        E: Into<String>,
+    {
+        MprisError::PlayerErr(PlayerError::Other(err.into()))
     }
 }
 
@@ -247,6 +269,189 @@ impl MprisPlayer {
             .map_err(|err| PlayerError::failed_to_get_prop("Metadata", err.to_string()))?;
 
         Ok(PlayerMetadata::new(metadata))
+    }
+
+    pub async fn play(&mut self) -> MprisResult<()> {
+        self.player_proxy
+            .call_method("Play", &())
+            .await
+            .map_err(|err| PlayerError::failed_to_call_fn("Play", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn play_pause(&mut self) -> MprisResult<()> {
+        self.player_proxy
+            .call_method("PlayPause", &())
+            .await
+            .map_err(|err| PlayerError::failed_to_call_fn("PlayPause", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn pause(&mut self) -> MprisResult<()> {
+        self.player_proxy
+            .call_method("Play", &())
+            .await
+            .map_err(|err| PlayerError::failed_to_call_fn("Play", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn stop(&mut self) -> MprisResult<()> {
+        self.player_proxy
+            .call_method("Stop", &())
+            .await
+            .map_err(|err| PlayerError::failed_to_call_fn("Stop", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn next(&mut self) -> MprisResult<()> {
+        self.player_proxy
+            .call_method("Next", &())
+            .await
+            .map_err(|err| PlayerError::failed_to_call_fn("Next", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn previous(&mut self) -> MprisResult<()> {
+        self.player_proxy
+            .call_method("Previous", &())
+            .await
+            .map_err(|err| PlayerError::failed_to_call_fn("Previous", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn seek_forward(&mut self, offset: Duration) -> MprisResult<()> {
+        self.player_proxy
+            .call_method("Seek", &(offset.as_micros() as i64))
+            .await
+            .map_err(|err| PlayerError::failed_to_call_fn("Seek", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn seek_backward(&mut self, offset: Duration) -> MprisResult<()> {
+        self.player_proxy
+            .call_method("Seek", &(-(offset.as_micros() as i64)))
+            .await
+            .map_err(|err| PlayerError::failed_to_call_fn("Seek", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn set_position(&mut self, trackid: &str, position: Duration) -> MprisResult<()> {
+        let trackid = ObjectPath::try_from(trackid).map_err(|err| {
+            PlayerError::other(format!("Failed to create player track id: {err}"))
+        })?;
+
+        self.player_proxy
+            .call_method("SetPosition", &(trackid, position.as_micros() as i64))
+            .await
+            .map_err(|err| PlayerError::failed_to_call_fn("SetPosition", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn playback_status(&self) -> MprisResult<PlaybackStatus> {
+        let playback_status: String = self
+            .player_proxy
+            .get_property("PlaybackStatus")
+            .await
+            .map_err(|err| PlayerError::failed_to_get_prop("PlaybackStatus", err.to_string()))?;
+
+        Ok(PlaybackStatus::from_str(&playback_status)?)
+    }
+
+    pub async fn loop_status(&self) -> MprisResult<LoopStatus> {
+        let loop_status: String = self
+            .player_proxy
+            .get_property("LoopStatus")
+            .await
+            .map_err(|err| PlayerError::failed_to_get_prop("LoopStatus", err.to_string()))?;
+
+        Ok(LoopStatus::from_str(&loop_status)?)
+    }
+
+    pub async fn set_loop_status(&mut self, loop_status: LoopStatus) -> MprisResult<()> {
+        if !self.can_control().await? {
+            return Err(PlayerError::failed_to_set_prop(
+                "LoopStatus",
+                "CanControl is false",
+            ));
+        }
+
+        self.player_proxy
+            .set_property("LoopStatus", loop_status.to_string())
+            .await
+            .map_err(|err| PlayerError::failed_to_set_prop("LoopStatus", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn shuffle(&self) -> MprisResult<bool> {
+        let shuffle: bool = self
+            .player_proxy
+            .get_property("Shuffle")
+            .await
+            .map_err(|err| PlayerError::failed_to_get_prop("Shuffle", err.to_string()))?;
+
+        Ok(shuffle)
+    }
+
+    pub async fn set_shuffle(&mut self, shuffle: bool) -> MprisResult<()> {
+        if !self.can_control().await? {
+            return Err(PlayerError::failed_to_set_prop(
+                "Shuffle",
+                "CanControl is false",
+            ));
+        }
+
+        self.player_proxy
+            .set_property("Shuffle", shuffle)
+            .await
+            .map_err(|err| PlayerError::failed_to_set_prop("Shuffle", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn volume(&self) -> MprisResult<f64> {
+        let volume: f64 = self
+            .player_proxy
+            .get_property("Volume")
+            .await
+            .map_err(|err| PlayerError::failed_to_get_prop("Volume", err.to_string()))?;
+
+        Ok(volume)
+    }
+
+    pub async fn set_volume(&mut self, volume: f64) -> MprisResult<()> {
+        if !self.can_control().await? {
+            return Err(PlayerError::failed_to_set_prop(
+                "Volume",
+                "CanControl is false",
+            ));
+        }
+
+        self.player_proxy
+            .set_property("Volume", volume)
+            .await
+            .map_err(|err| PlayerError::failed_to_set_prop("Position", err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn position(&self) -> MprisResult<Duration> {
+        let position: i64 = self
+            .player_proxy
+            .get_property("Position")
+            .await
+            .map_err(|err| PlayerError::failed_to_set_prop("Position", err.to_string()))?;
+
+        Ok(Duration::from_micros(position as u64))
     }
 
     /// Playback Rate of player.

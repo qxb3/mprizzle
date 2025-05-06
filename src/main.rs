@@ -3,7 +3,7 @@ use mprizzle::{Mpris, MprisOptions, PlayerIdentity};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut mpris = Mpris::new(Some(MprisOptions {
-        filter_players: vec!["lowfi"],
+        filter_players: vec![],
     }))
     .await?;
 
@@ -52,7 +52,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             mprizzle::MprisEvent::PlayerSeeked(id) => {}
-            mprizzle::MprisEvent::PlayerPosition(id, pos) => {}
+            mprizzle::MprisEvent::PlayerPosition(id, pos) => {
+                let players = shared_players.try_lock()?;
+
+                if let Some(curr_id) = &curr_player_id {
+                    if curr_id == &id {
+                        if let Some(pl) = players.get(curr_id) {
+                            println!("POS {} = {:?}", curr_id.short(), pl.position().await?);
+                        }
+                    }
+                }
+            }
         }
     }
 
