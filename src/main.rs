@@ -1,11 +1,8 @@
-use mprizzle::{Mpris, MprisOptions, PlayerIdentity};
+use mprizzle::{Mpris, PlayerIdentity};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut mpris = Mpris::new(Some(MprisOptions {
-        filter_players: vec![],
-    }))
-    .await?;
+    let mut mpris = Mpris::new().await?;
 
     let shared_players = mpris.players();
 

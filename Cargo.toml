@@ -1,7 +1,7 @@
 [package]
 name = "mprizzle"
 description = "An async library for interacting with mpris over D-Bus."
-version = "0.0.4"
+version = "0.0.5"
 repository = "https://github.com/qxb3/mprizzle"
 homepage = "https://github.com/qxb3/mprizzle"
 license = "MIT"
