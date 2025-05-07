@@ -98,9 +98,6 @@ pub struct Mpris {
     /// The underlying connection to D-Bus.
     connection: Arc<Mutex<Connection>>,
 
-    /// The current active players.
-    players: Arc<Mutex<HashMap<PlayerIdentity, MprisPlayer>>>,
-
     /// Event sender.
     sender: mpsc::UnboundedSender<MprisResult<MprisEvent>>,
 
@@ -116,13 +113,10 @@ impl Mpris {
 
         let connection = Arc::new(Mutex::new(session));
 
-        let players = Arc::new(Mutex::new(HashMap::new()));
-
         let (sender, receiver) = mpsc::unbounded_channel();
 
         Ok(Self {
             connection,
-            players,
             sender,
             receiver,
         })
@@ -131,8 +125,6 @@ impl Mpris {
     /// Start watching for mpris events.
     pub fn watch(&self) {
         let shared_connection = self.connection();
-        let shared_players = self.players();
-
         let event_sender = self.sender();
 
         // Creates a broadcast channel for indicating to a player,
@@ -205,10 +197,6 @@ impl Mpris {
                 // Watch this existing player for events.
                 player.watch(event_sender.clone(), close_sender.subscribe());
 
-                // Push the player in the shared players.
-                let mut players = shared_players.lock().await;
-                players.insert(identity.clone(), player);
-
                 // Send out PlayerAttached event along with the identity.
                 event_sender
                     .send(Ok(MprisEvent::PlayerAttached(identity)))
@@ -256,10 +244,6 @@ impl Mpris {
                                 // Watch this newly created player for events.
                                 player.watch(event_sender.clone(), close_sender.subscribe());
 
-                                // Push the player in the shared players.
-                                let mut players = shared_players.lock().await;
-                                players.insert(identity.clone(), player);
-
                                 // Send out PlayerAttached event along with the identity.
                                 event_sender.send(Ok(MprisEvent::PlayerAttached(identity))).unwrap();
                             }
@@ -277,16 +261,8 @@ impl Mpris {
                                     }
                                 };
 
-                                let mut players = shared_players.lock().await;
-
-                                // Only send out the PlayerDetached event if its on the shared players only.
-                                if let Some(_) = players.remove(&identity) {
-                                    // Send an event to the close channel.
-                                    close_sender.send(identity.bus().to_string()).unwrap();
-
-                                    // Send out the PlayerDetached event.
-                                    event_sender.send(Ok(MprisEvent::PlayerDetached(identity))).unwrap();
-                                }
+                                // Send out the PlayerDetached event.
+                                event_sender.send(Ok(MprisEvent::PlayerDetached(identity))).unwrap();
                             }
                         }
                     }
@@ -306,11 +282,6 @@ impl Mpris {
     /// Gets the shared mpris connection.
     pub fn connection(&self) -> Arc<Mutex<Connection>> {
         Arc::clone(&self.connection)
-    }
-
-    /// Gets the shared active players.
-    pub fn players(&self) -> Arc<Mutex<HashMap<PlayerIdentity, MprisPlayer>>> {
-        Arc::clone(&self.players)
     }
 
     /// Gets the cloned event sender.
