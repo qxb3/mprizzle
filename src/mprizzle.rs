@@ -46,7 +46,9 @@ pub type MprisResult<T> = Result<T, MprisError>;
 /// Represents events triggered by changes in an MPRIS media player.
 pub enum MprisEvent {
     /// Triggers when a new player has been attached or added.
-    PlayerAttached(PlayerIdentity),
+    /// This is the only event that has the MprisPlayer on it.
+    /// You should add it on state to be managed.
+    PlayerAttached(MprisPlayer),
 
     /// Triggers when an existing player has been detached or removed.
     PlayerDetached(PlayerIdentity),
@@ -83,8 +85,8 @@ pub enum MprisEvent {
 ///
 ///         match event_result {
 ///             Ok(event) => match event {
-///                 MprisEvent::PlayerAttached(identity) => println!("ATTACHED = {:?}", identity),
-///                 MprisEvent::PlayerDetached(identity) => println!("DETACHED = {:?}", identity),
+///                 MprisEvent::PlayerAttached(player) => println!("ATTACHED = {:?}", player.identity().short()),
+///                 MprisEvent::PlayerDetached(identity) => println!("DETACHED = {:?}", identity.short()),
 ///             },
 ///             Err(err) => panic!("{:?}", err),
 ///         }
@@ -197,9 +199,9 @@ impl Mpris {
                 // Watch this existing player for events.
                 player.watch(event_sender.clone(), close_sender.subscribe());
 
-                // Send out PlayerAttached event along with the identity.
+                // Send out PlayerAttached event along with the player.
                 event_sender
-                    .send(Ok(MprisEvent::PlayerAttached(identity)))
+                    .send(Ok(MprisEvent::PlayerAttached(player)))
                     .unwrap();
             }
 
@@ -244,8 +246,8 @@ impl Mpris {
                                 // Watch this newly created player for events.
                                 player.watch(event_sender.clone(), close_sender.subscribe());
 
-                                // Send out PlayerAttached event along with the identity.
-                                event_sender.send(Ok(MprisEvent::PlayerAttached(identity))).unwrap();
+                                // Send out PlayerAttached event along with the player.
+                                event_sender.send(Ok(MprisEvent::PlayerAttached(player))).unwrap();
                             }
 
                             // There has been a mpris player detached.
