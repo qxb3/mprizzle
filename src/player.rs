@@ -187,10 +187,7 @@ impl MprisPlayer {
                     biased;
 
                     // Break out of the loop if the event channel has been closed.
-                    _ = event_sender.closed() => {
-                        println!("run");
-                        break;
-                    },
+                    _ = event_sender.closed() => break,
 
                     // Break out of the loop if the close channel event bus matches the identity.
                     close_res = close_rx.recv() => {
