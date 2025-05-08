@@ -252,7 +252,7 @@ impl Mpris {
 
                             // There has been a mpris player detached.
                             if !old_owner.is_empty() && new_owner.is_empty() {
-                                let identity = match PlayerIdentity::new(name) {
+                                let identity = match PlayerIdentity::new(name.to_string()) {
                                     Ok(identity) => identity,
                                     Err(err) => {
                                         event_sender
@@ -262,6 +262,9 @@ impl Mpris {
                                         return;
                                     }
                                 };
+
+                                // Sends out the event to close the async task of player.
+                                close_sender.send(name).unwrap();
 
                                 // Send out the PlayerDetached event.
                                 event_sender.send(Ok(MprisEvent::PlayerDetached(identity))).unwrap();
